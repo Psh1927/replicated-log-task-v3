@@ -32,8 +32,8 @@ class CountDownLatch:
             self.condition.wait()
 
 
-secondaries = [{'name': 'secondary-1', 'address': 'http://127.0.0.1:8081', 'status': 'suspected'},
-                {'name': 'secondary-2', 'address': 'http://127.0.0.1:8082', 'status': 'suspected'}]
+secondaries = [{'name': 'secondary-1', 'address': 'http://secondary-1:8081', 'status': 'suspected'},
+                {'name': 'secondary-2', 'address': 'http://secondary-2:8082', 'status': 'suspected'}]
 memory_list = list()
 quorum = False
 id_count = 1
@@ -45,14 +45,10 @@ def heartbeat_sender():
     global quorum
     while True:
         for secondary in secondaries:
-            time.sleep(10)
             try:
-                if requests.get(secondary['address'] + '/health', timeout=3).ok:
+                if requests.get(secondary['address'] + '/health', timeout=10).ok:
                     logging.info("Get heartbeat from " + secondary['name'] + " : True")
-                    if secondary['status'] == 'unhealthy':
-                        secondary['status'] = 'suspected'
-                    elif secondary['status'] == 'suspected':
-                        secondary['status'] = 'healthy'
+                    secondary['status'] = 'healthy'
                 else:
                     if secondary['status'] == 'healthy':
                         secondary['status'] = 'suspected'
@@ -76,21 +72,23 @@ def heartbeat_sender():
         else:
             quorum = False
         logging.info("Quorum: " + str(quorum))
+        time.sleep(10)
 
 
 def send_to_secondary(latch, secondary, value):
     logging.info('Replication to ' + secondary['name'] + ' ' + secondary['address'] + ': '
                  + 'id=' + str(value['id']) + ' msg=' + value['msg'])
     try:
-        result = requests.post(secondary['address'], json=json.dumps(value)).ok
+        result = requests.post(secondary['address'], json=json.dumps(value), timeout=10).ok
     except:
         result = False
     retry_num = 1
-    while not result and secondary['status'] != 'unhealthy':
+    while not result:
+        time.sleep(retry_num * 2) if secondary['status'] == 'healthy' else time.sleep(retry_num ** 2)
         logging.info('Retry #' + str(retry_num) + ' replication to ' + secondary['name'] + ' ' + secondary['address']
                      + ': ' + 'id=' + str(value['id']) + ' msg=' + value['msg'])
         try:
-            result = requests.post(secondary['address'], json=json.dumps(value)).ok
+            result = requests.post(secondary['address'], json=json.dumps(value), timeout=10).ok
         except:
             result = False
         retry_num += 1
@@ -130,7 +128,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.wfile.write("Empty list".encode())
         response = ""
         for row in memory_list:
-            response +=  str(row['id']) + ' ' + row['msg'] + '\n'
+            response += str(row['id']) + ' ' + row['msg'] + '\n'
         self.wfile.write(response.encode())
 
     def do_POST(self):
